@@ -1,0 +1,8 @@
+refs/
+runs/
+__pycache__/
+.vscode/
+.cursor/
+model.pth
+model.pt
+MNIST/
