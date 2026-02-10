@@ -50,7 +50,7 @@ dataloader = DataLoader(
 # Attempt to load a previously saved model checkpoint.  If no checkpoint
 # exists, create a fresh UNet with 1 input channel (grayscale).
 try:
-    model = torch.load("model.pt")
+    model = torch.load("model.pt", weights_only=False)
 except:
     model = UNet(img_channel=1).to(DEVICE)  # UNet for single-channel (grayscale) images
 

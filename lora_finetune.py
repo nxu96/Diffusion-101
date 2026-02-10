@@ -37,7 +37,7 @@ BATCH_SIZE = 400  # Number of images per mini-batch
 # ---------------------------------------------------------------------------
 if __name__ == '__main__':
     # --- Load the pre-trained base model ---
-    model = torch.load('model.pt')
+    model = torch.load('model.pt', weights_only=False)
 
     # --- Inject LoRA into cross-attention linear layers ---
     # Iterate over all named modules in the model and find the Q, K, V
@@ -56,7 +56,7 @@ if __name__ == '__main__':
     # strict=False allows loading only the LoRA parameters while ignoring
     # the rest of the model state dict.
     try:
-        restore_lora_state = torch.load('lora.pt')
+        restore_lora_state = torch.load('lora.pt', weights_only=False)
         model.load_state_dict(restore_lora_state, strict=False)
     except:
         pass

@@ -13,14 +13,13 @@ Usage:
     python denoise.py
 """
 
+import matplotlib.pyplot as plt
 import torch
 from config import *
-from diffusion import *
-import matplotlib.pyplot as plt
 from dataset import tensor_to_pil
-from lora import LoraLayer
+from diffusion import *
+from lora import LoraLayer, inject_lora
 from torch import nn
-from lora import inject_lora
 
 
 def backward_denoise(model, batch_x_t, batch_cls):
@@ -47,7 +46,9 @@ def backward_denoise(model, batch_x_t, batch_cls):
                Length: T + 1.
     """
     # Store intermediate results for visualization of the denoising trajectory
-    steps = [batch_x_t, ]
+    steps = [
+        batch_x_t,
+    ]
 
     # Access the precomputed noise schedule parameters from diffusion.py
     global alphas, alphas_cumprod, variance
@@ -81,20 +82,23 @@ def backward_denoise(model, batch_x_t, batch_cls):
             shape = (batch_x_t.size(0), 1, 1, 1)
 
             # mu_t = (1/sqrt(alpha_t)) * (x_t - (1-alpha_t)/sqrt(1-alpha_bar_t) * noise)
-            batch_mean_t = 1 / torch.sqrt(alphas[batch_t].view(*shape)) * \
-                (
-                    batch_x_t -
-                    (1 - alphas[batch_t].view(*shape)) / torch.sqrt(
-                        1 - alphas_cumprod[batch_t].view(*shape)
-                    ) * batch_predict_noise_t
+            batch_mean_t = (
+                1
+                / torch.sqrt(alphas[batch_t].view(*shape))
+                * (
+                    batch_x_t
+                    - (1 - alphas[batch_t].view(*shape))
+                    / torch.sqrt(1 - alphas_cumprod[batch_t].view(*shape))
+                    * batch_predict_noise_t
                 )
+            )
 
             if t != 0:
                 # For t > 0: sample x_{t-1} = mu_t + sqrt(variance_t) * z
                 # where z ~ N(0, I) is fresh Gaussian noise
-                batch_x_t = batch_mean_t + \
-                    torch.randn_like(batch_x_t) * \
-                    torch.sqrt(variance[batch_t].view(*shape))
+                batch_x_t = batch_mean_t + torch.randn_like(batch_x_t) * torch.sqrt(
+                    variance[batch_t].view(*shape)
+                )
             else:
                 # For t = 0: no noise is added; the mean IS the final output
                 batch_x_t = batch_mean_t
@@ -112,25 +116,27 @@ def backward_denoise(model, batch_x_t, batch_cls):
 # ===========================================================================
 # Image generation demo (runs only when executed as a script)
 # ===========================================================================
-if __name__ == '__main__':
+if __name__ == "__main__":
     # --- Load the pre-trained base model ---
-    model = torch.load('model.pt')
+    model = torch.load("model.pt", weights_only=False)
 
     # Flag to control whether LoRA weights are merged into the base model
-    USE_LORA = True
+    USE_LORA = False
 
     if USE_LORA:
         # --- Inject LoRA layers into cross-attention Q/K/V projections ---
         for name, layer in model.named_modules():
-            name_cols = name.split('.')
+            name_cols = name.split(".")
             # Target only the query, key, and value projection layers
-            filter_names = ['w_q', 'w_k', 'w_v']
-            if any(n in name_cols for n in filter_names) and isinstance(layer, nn.Linear):
+            filter_names = ["w_q", "w_k", "w_v"]
+            if any(n in name_cols for n in filter_names) and isinstance(
+                layer, nn.Linear
+            ):
                 inject_lora(model, name, layer)
 
         # --- Load saved LoRA weights ---
         try:
-            restore_lora_state = torch.load('lora.pt')
+            restore_lora_state = torch.load("lora.pt", weights_only=False)
             model.load_state_dict(restore_lora_state, strict=False)
         except:
             pass
@@ -144,7 +150,7 @@ if __name__ == '__main__':
         #   W_merged = W_original + (A @ B) * (alpha / r)
         # This eliminates the LoRA overhead at inference time.
         for name, layer in model.named_modules():
-            name_cols = name.split('.')
+            name_cols = name.split(".")
 
             if isinstance(layer, LoraLayer):
                 # Navigate to the parent module that contains this LoRA layer
@@ -171,6 +177,11 @@ if __name__ == '__main__':
     # Print the final model architecture
     print(model)
 
+    # Print the number of parameters in the model.
+    print(
+        f"Number of parameters in the model: {sum(p.numel() for p in model.parameters()):,}"
+    )
+
     # --- Generate images ---
     # Create a batch of pure Gaussian noise as the starting point
     batch_size = 10
@@ -191,10 +202,11 @@ if __name__ == '__main__':
             # Select evenly-spaced timesteps from the denoising trajectory
             idx = int(T / num_imgs) * (i + 1)
             # Rescale pixel values from [-1, 1] back to [0, 1] for display
-            final_img = (steps[idx][b].to('cpu') + 1) / 2
+            final_img = (steps[idx][b].to("cpu") + 1) / 2
             # Convert tensor to PIL image for matplotlib rendering
             final_img = tensor_to_pil(final_img)
             # Plot in a grid: rows = digits, columns = denoising steps
             plt.subplot(batch_size, num_imgs, b * num_imgs + i + 1)
             plt.imshow(final_img)
-    plt.show()
+    # plt.show()
+    plt.savefig("imgs/conditional_inference.png")
