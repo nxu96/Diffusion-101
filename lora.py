@@ -11,10 +11,11 @@ This module provides:
 Reference: Hu et al., "LoRA: Low-Rank Adaptation of Large Language Models", 2021.
 """
 
-from config import *
-import torch
-from torch import nn
 import math
+
+import torch
+from config import *
+from torch import nn
 
 
 class LoraLayer(nn.Module):
@@ -91,7 +92,7 @@ def inject_lora(model, name, layer):
         layer (nn.Linear): The original linear layer to be wrapped with LoRA.
     """
     # Split the dotted name into individual component names
-    name_cols = name.split('.')
+    name_cols = name.split(".")
 
     # Navigate down the module hierarchy to reach the parent of the target layer
     # e.g. for "enc_convs.0.crossattn.w_q", traverse enc_convs -> 0 -> crossattn
@@ -102,7 +103,9 @@ def inject_lora(model, name, layer):
 
     # Create a new LoraLayer wrapping the original linear layer with the
     # configured rank and alpha from config.py
-    lora_layer = LoraLayer(layer, layer.in_features, layer.out_features, LORA_R, LORA_ALPHA)
+    lora_layer = LoraLayer(
+        layer, layer.in_features, layer.out_features, LORA_R, LORA_ALPHA
+    )
 
     # Replace the original linear layer with the LoRA-wrapped version
     # in the parent module
