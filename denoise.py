@@ -121,7 +121,7 @@ if __name__ == "__main__":
     model = torch.load("model.pt", weights_only=False)
 
     # Flag to control whether LoRA weights are merged into the base model
-    USE_LORA = False
+    USE_LORA = True
 
     if USE_LORA:
         # --- Inject LoRA layers into cross-attention Q/K/V projections ---
@@ -139,7 +139,7 @@ if __name__ == "__main__":
             restore_lora_state = torch.load("lora.pt", weights_only=False)
             model.load_state_dict(restore_lora_state, strict=False)
         except:
-            pass
+            raise Exception("LoRA weights not found")
 
         # Move model to compute device
         model = model.to(DEVICE)
@@ -149,30 +149,32 @@ if __name__ == "__main__":
         # we fold the LoRA contribution directly into the base linear weight:
         #   W_merged = W_original + (A @ B) * (alpha / r)
         # This eliminates the LoRA overhead at inference time.
-        for name, layer in model.named_modules():
+        # Collect LoRA layers first to avoid mutating module tree while iterating.
+        lora_layers = [
+            (name, layer)
+            for name, layer in model.named_modules()
+            if isinstance(layer, LoraLayer)
+        ]
+        for name, layer in lora_layers:
             name_cols = name.split(".")
 
-            if isinstance(layer, LoraLayer):
-                # Navigate to the parent module that contains this LoRA layer
-                children = name_cols[:-1]
-                cur_layer = model
-                for child in children:
-                    cur_layer = getattr(cur_layer, child)
+            # Navigate to the parent module that contains this LoRA layer
+            children = name_cols[:-1]
+            cur_layer = model
+            for child in children:
+                cur_layer = getattr(cur_layer, child)
 
-                # Compute the LoRA weight delta: (A @ B) * (alpha / r)
-                lora_weight = (layer.lora_a @ layer.lora_b) * layer.alpha / layer.r
+            # Compute the LoRA weight delta: (A @ B) * (alpha / r)
+            lora_weight = (layer.lora_a @ layer.lora_b) * layer.alpha / layer.r
 
-                # Store original weight for reference (unused but kept for clarity)
-                before_weight = layer.raw_linear.weight.clone()
+            # Add LoRA delta to the original linear weight (transposed because
+            # nn.Linear stores weight as (out_features, in_features))
+            layer.raw_linear.weight = nn.Parameter(
+                layer.raw_linear.weight.add(lora_weight.T).to(DEVICE)
+            )
 
-                # Add LoRA delta to the original linear weight (transposed because
-                # nn.Linear stores weight as (out_features, in_features))
-                layer.raw_linear.weight = nn.Parameter(
-                    layer.raw_linear.weight.add(lora_weight.T)
-                ).to(DEVICE)
-
-                # Replace the LoRA wrapper with the merged linear layer
-                setattr(cur_layer, name_cols[-1], layer.raw_linear)
+            # Replace the LoRA wrapper with the merged linear layer
+            setattr(cur_layer, name_cols[-1], layer.raw_linear)
 
     # Print the final model architecture
     print(model)

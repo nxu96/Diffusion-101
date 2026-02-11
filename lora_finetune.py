@@ -15,37 +15,38 @@ Usage:
     python lora_finetune.py
 """
 
-from unet import UNet
+import os
+
+import torch
+from config import *
 from dataset import train_dataset
 from diffusion import forward_diffusion
-from config import *
-import torch
+from lora import inject_lora
 from torch import nn
 from torch.utils.data import DataLoader
 from torch.utils.tensorboard import SummaryWriter
-import os
-from lora import inject_lora
+from unet import UNet
 
 # ---------------------------------------------------------------------------
 # Training hyperparameters
 # ---------------------------------------------------------------------------
-EPOCH = 200       # Total number of fine-tuning epochs
+EPOCH = 200  # Total number of fine-tuning epochs
 BATCH_SIZE = 400  # Number of images per mini-batch
 
 # ---------------------------------------------------------------------------
 # Main fine-tuning script
 # ---------------------------------------------------------------------------
-if __name__ == '__main__':
+if __name__ == "__main__":
     # --- Load the pre-trained base model ---
-    model = torch.load('model.pt', weights_only=False)
+    model = torch.load("model.pt", weights_only=False)
 
     # --- Inject LoRA into cross-attention linear layers ---
     # Iterate over all named modules in the model and find the Q, K, V
     # linear projections used in cross-attention blocks.
     for name, layer in model.named_modules():
-        name_cols = name.split('.')
+        name_cols = name.split(".")
         # Target only the query, key, and value projection layers
-        filter_names = ['w_q', 'w_k', 'w_v']
+        filter_names = ["w_q", "w_k", "w_v"]
         # Check if this module is one of the target linear layers
         if any(n in name_cols for n in filter_names) and isinstance(layer, nn.Linear):
             # Replace the nn.Linear with a LoraLayer wrapper
@@ -56,7 +57,7 @@ if __name__ == '__main__':
     # strict=False allows loading only the LoRA parameters while ignoring
     # the rest of the model state dict.
     try:
-        restore_lora_state = torch.load('lora.pt', weights_only=False)
+        restore_lora_state = torch.load("lora.pt", weights_only=False)
         model.load_state_dict(restore_lora_state, strict=False)
     except:
         pass
@@ -68,7 +69,8 @@ if __name__ == '__main__':
     # Only the lora_a and lora_b matrices will receive gradient updates;
     # all other parameters (base model weights) remain frozen.
     for name, param in model.named_parameters():
-        if name.split('.')[-1] not in ['lora_a', 'lora_b']:
+        if name.split(".")[-1] not in ["lora_a", "lora_b"]:
+            # NOTE: This is how we freeze the base model parameters.
             # Freeze base model parameters by disabling gradient computation
             param.requires_grad = False
         else:
@@ -82,15 +84,14 @@ if __name__ == '__main__':
         batch_size=BATCH_SIZE,
         num_workers=4,
         persistent_workers=True,
-        shuffle=True
+        shuffle=True,
     )
 
     # --- Optimizer ---
     # Only update parameters that require gradients (i.e., LoRA weights).
     # filter() ensures the optimizer only tracks LoRA parameters.
     optimizer = torch.optim.Adam(
-        filter(lambda x: x.requires_grad == True, model.parameters()),
-        lr=0.001
+        filter(lambda x: x.requires_grad == True, model.parameters()), lr=0.001
     )
 
     # L1 loss (mean absolute error) between predicted and actual noise
@@ -139,23 +140,23 @@ if __name__ == '__main__':
             # Record the loss value for this batch
             last_loss = loss.item()
             # Log the training loss to TensorBoard
-            writer.add_scalar('Loss/train', last_loss, n_iter)
+            writer.add_scalar("Loss/train", last_loss, n_iter)
             n_iter += 1
 
         # Print epoch summary
-        print('epoch:{} loss={}'.format(epoch, last_loss))
+        print("epoch:{} loss={}".format(epoch, last_loss))
 
         # --- Save only LoRA weights ---
         # Extract only the lora_a and lora_b parameters from the model
         # state dict, keeping the checkpoint small and focused.
         lora_state = {}
         for name, param in model.named_parameters():
-            name_cols = name.split('.')
-            filter_names = ['lora_a', 'lora_b']
+            name_cols = name.split(".")
+            filter_names = ["lora_a", "lora_b"]
             # Check if this parameter is a LoRA weight
             if any(n == name_cols[-1] for n in filter_names):
                 lora_state[name] = param
 
         # Save atomically: write to temp file, then rename to prevent corruption
-        torch.save(lora_state, 'lora.pt.tmp')
-        os.replace('lora.pt.tmp', 'lora.pt')
+        torch.save(lora_state, "lora.pt.tmp")
+        os.replace("lora.pt.tmp", "lora.pt")
